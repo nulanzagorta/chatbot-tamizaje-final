@@ -89,7 +89,13 @@
   async function sendUserMessage(text){
     await ensureThread();
     addMsg(text,"user");
-    await http(`/threads/${threadId}/messages`,"POST",{ role:"user", content:text });
+
+    // ✅ CORREGIDO para Assistants v2
+    await http(`/threads/${threadId}/messages`,"POST",{
+      role: "user",
+      content: [{ type: "text", text }]
+    });
+
     const run = await http(`/threads/${threadId}/runs`,"POST",{ assistant_id: ASSISTANT_ID });
     await pollRun(run.id);
     await printNewAssistantMessages();
