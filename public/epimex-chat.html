@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tamizaje EPIMex – Chat</title>
+<style>
+  :root { --bg:#0f172a; --panel:#111827; --bot:#1f2937; --user:#2563eb; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial;color:var(--text)}
+  header{position:sticky;top:0;background:var(--panel);padding:12px 16px;border-bottom:1px solid #1f2937;display:flex;gap:12px;align-items:center}
+  header h1{font-size:16px;margin:0;flex:1}
+  header button{background:#374151;border:none;color:#fff;padding:8px 12px;border-radius:10px;cursor:pointer}
+  header button:hover{opacity:.9}
+  .wrap{max-width:820px;margin:0 auto;display:flex;flex-direction:column;height:100dvh}
+  .chat{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:80%;padding:12px 14px;border-radius:14px;line-height:1.35;white-space:pre-wrap}
+  .bot{background:var(--bot);border-top-left-radius:6px}
+  .user{background:var(--user);border-top-right-radius:6px;margin-left:auto}
+  .sys{background:#065f46;border:1px solid #10b981}
+  .composer{display:flex;gap:10px;padding:14px;border-top:1px solid #1f2937;background:var(--panel)}
+  .composer input{flex:1;padding:12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:#fff}
+  .composer button{background:var(--accent);color:#052e16;font-weight:600;border:none;padding:12px 18px;border-radius:12px;cursor:pointer}
+  .badge{font-size:12px;color:#a7f3d0;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🧪 Tamizaje EPIMex <span class="badge" id="statusBadge">conectando…</span></h1>
+    <button id="newThreadBtn">Nuevo hilo</button>
+  </header>
+
+  <div id="chat" class="chat"></div>
+
+  <div class="composer">
+    <input id="input" placeholder="Escribe tu mensaje… (Tip: /tamizaje)" autocomplete="off" />
+    <button id="send">Enviar</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // === CONFIG ===
+  const PROXY_BASE = "/api";                                      // MISMO dominio → sin CORS
+  const ASSISTANT_ID = "asst_WDfPfJ9YjJjaKVMNgwkMo8fh";           // Tu Assistant
+  // ==============
+
+  let threadId = localStorage.getItem("epimex_thread_id") || null;
+  const printedMsgIds = new Set();
+
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const statusBadge = document.getElementById("statusBadge");
+  const scroll = () => chat.scrollTop = chat.scrollHeight;
+
+  function addMsg(text, who="bot"){
+    const b = document.createElement("div");
+    b.className = `msg ${who}`;
+    b.textContent = text;
+    chat.appendChild(b);
+    scroll();
+  }
+
+  function setBadge(text, ok=true){
+    statusBadge.textContent = text;
+    statusBadge.style.color = ok ? "#a7f3d0" : "#fca5a5";
+  }
+
+  async function http(path, method="GET", body){
+    const url = PROXY_BASE + path; // path empieza con /threads...
+    const headers = {"Content-Type":"application/json"};
+    const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body): undefined });
+    if(!r.ok){
+      const t = await r.text().catch(()=> "");
+      throw new Error(`HTTP ${r.status}: ${t}`);
+    }
+    return r.json();
+  }
+
+  async function ensureThread(){
+    if (threadId) return threadId;
+    const t = await http("/threads","POST");
+    threadId = t.id;
+    localStorage.setItem("epimex_thread_id", threadId);
+    setBadge("listo");
+    return threadId;
+  }
+
+  async function sendUserMessage(text){
+    await ensureThread();
+    addMsg(text,"user");
+    await http(`/threads/${threadId}/messages`,"POST",{ role:"user", content:text });
+    const run = await http(`/threads/${threadId}/runs`,"POST",{ assistant_id: ASSISTANT_ID });
+    await pollRun(run.id);
+    await printNewAssistantMessages();
+  }
+
+  async function pollRun(runId){
+    let status = "queued";
+    const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+    while(!["completed","failed","cancelled","expired"].includes(status)){
+      const r = await http(`/threads/${threadId}/runs/${runId}`,"GET");
+      status = r.status;
+      setBadge(status === "completed" ? "listo" : `ejecutando: ${status}`, status==="completed");
+      if (status !== "completed") await sleep(900);
+    }
+  }
+
+  async function printNewAssistantMessages(){
+    const data = await http(`/threads/${threadId}/messages`,"GET");
+    data.data
+      .filter(m=>m.role==="assistant")
+      .sort((a,b)=>a.created_at-b.created_at)
+      .forEach(m=>{
+        if (printedMsgIds.has(m.id)) return;
+        const block = m.content?.find(c=>c.type==="text");
+        const txt = block?.text?.value?.trim();
+        if (txt) addMsg(txt,"bot");
+        printedMsgIds.add(m.id);
+      });
+  }
+
+  async function handleSend(){
+    const text = (input.value||"").trim();
+    if (!text) return;
+    input.value = "";
+    try{
+      await sendUserMessage(text);
+    }catch(err){
+      console.error(err);
+      addMsg("⚠️ Ocurrió un error al enviar el mensaje. Revisa el proxy/assistant y vuelve a intentar.","sys");
+      setBadge("error",false);
+    }
+  }
+
+  document.getElementById("send").addEventListener("click", handleSend);
+  input.addEventListener("keydown", e => { if(e.key==="Enter") handleSend(); });
+  document.getElementById("newThreadBtn").addEventListener("click", async ()=>{
+    localStorage.removeItem("epimex_thread_id");
+    threadId = null;
+    printedMsgIds.clear();
+    chat.innerHTML = "";
+    greet();
+    await ensureThread();
+  });
+
+  function greet(){
+    addMsg(
+`👋 Hola, soy el asistente de tamizaje de EPIMex.
+Te haré algunas preguntas rápidas 📝 para saber si el/la candidato(a) cumple criterios de participación.
+
+Escribe /tamizaje para comenzar.`, "bot");
+  }
+
+  (async () => {
+    greet();
+    try{
+      await ensureThread();
+    }catch(e){
+      console.error(e);
+      setBadge("error", false);
+      addMsg("⚠️ No pude crear el hilo. Verifica OPENAI_API_KEY en Vercel y que el proxy esté desplegado.","sys");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
