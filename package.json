@@ -1,0 +1,6 @@
+{
+  "name": "epimex-proxy",
+  "private": true,
+  "type": "module",
+  "dependencies": {}
+}
