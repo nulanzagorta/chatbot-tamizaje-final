@@ -1,14 +1,16 @@
 export default async function handler(req, res) {
-  const r = await fetch("https://api.openai.com/v1/threads", {
-    method: req.method,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-      "OpenAI-Beta": "assistants=v2"
-    },
-    body: req.method !== "GET" ? JSON.stringify(req.body) : undefined
-  });
-
-  const data = await r.json();
-  res.status(r.status).json(data);
+  const url = "https://api.openai.com/v1/threads";
+  try {
+    const r = await fetch(url, {
+      method: req.method,
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "assistants=v2",
+      },
+      body: req.method === "GET" ? undefined : JSON.stringify(req.body || {})
+    });
+    const text = await r.text();
+    res.status(r.status).setHeader("Content-Type","application/json").send(text);
+  } catch (e) { res.status(500).json({ error:"proxy_error", detail:String(e) }); }
 }
